@@ -1,0 +1,121 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "ninja",
+      "hidden": true,
+      "generator": "Ninja"
+    },
+    {
+      "name": "vs2022",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": null
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "ci",
+      "hidden": true,
+      "description": "The pinned runtime archive, the praenora tool required, warnings as errors, pinned dependencies",
+      "cacheVariables": {
+        "PRAENORA_RUNTIME_SOURCE": "fetch",
+        "PRAENORA_REQUIRE_TOOL": "ON",
+        "MODULE_WARNINGS_AS_ERRORS": "ON",
+        "FETCHCONTENT_TRY_FIND_PACKAGE_MODE": "NEVER"
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "Development (Ninja, Debug)",
+      "inherits": ["base", "ninja"],
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "release",
+      "displayName": "Release (Ninja)",
+      "inherits": ["base", "ninja"],
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "windows-dev",
+      "displayName": "Development (Visual Studio 2022, x64)",
+      "inherits": ["base", "vs2022"]
+    },
+    {
+      "name": "ci-linux-x64-release",
+      "displayName": "CI: linux-x64-release",
+      "inherits": ["base", "ninja", "ci"],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PRAENORA_RUNTIME_PLATFORM": "linux-x64-release"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "ci-macos-arm64-release",
+      "displayName": "CI: macos-arm64-release",
+      "inherits": ["base", "ninja", "ci"],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "14.0",
+        "PRAENORA_RUNTIME_PLATFORM": "macos-arm64-release"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+    {
+      "name": "ci-windows-x64-release",
+      "displayName": "CI: windows-x64-release",
+      "inherits": ["base", "vs2022", "ci"],
+      "cacheVariables": {
+        "CMAKE_TRY_COMPILE_CONFIGURATION": "Release",
+        "PRAENORA_RUNTIME_PLATFORM": "windows-x64-release"
+      }
+    },
+    {
+      "name": "ci-windows-x64-debug",
+      "displayName": "CI: windows-x64-debug",
+      "inherits": ["base", "vs2022", "ci"],
+      "cacheVariables": {
+        "CMAKE_TRY_COMPILE_CONFIGURATION": "Debug",
+        "PRAENORA_RUNTIME_PLATFORM": "windows-x64-debug"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "windows-dev", "configurePreset": "windows-dev", "configuration": "Debug" },
+    { "name": "ci-linux-x64-release", "configurePreset": "ci-linux-x64-release" },
+    { "name": "ci-macos-arm64-release", "configurePreset": "ci-macos-arm64-release" },
+    { "name": "ci-windows-x64-release", "configurePreset": "ci-windows-x64-release", "configuration": "Release" },
+    { "name": "ci-windows-x64-debug", "configurePreset": "ci-windows-x64-debug", "configuration": "Debug" }
+  ],
+  "testPresets": [
+    {
+      "name": "test-base",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    { "name": "dev", "configurePreset": "dev", "inherits": "test-base" },
+    { "name": "release", "configurePreset": "release", "inherits": "test-base" },
+    { "name": "windows-dev", "configurePreset": "windows-dev", "inherits": "test-base", "configuration": "Debug" },
+    { "name": "ci-linux-x64-release", "configurePreset": "ci-linux-x64-release", "inherits": "test-base" },
+    { "name": "ci-macos-arm64-release", "configurePreset": "ci-macos-arm64-release", "inherits": "test-base" },
+    { "name": "ci-windows-x64-release", "configurePreset": "ci-windows-x64-release", "inherits": "test-base", "configuration": "Release" },
+    { "name": "ci-windows-x64-debug", "configurePreset": "ci-windows-x64-debug", "inherits": "test-base", "configuration": "Debug" }
+  ]
+}

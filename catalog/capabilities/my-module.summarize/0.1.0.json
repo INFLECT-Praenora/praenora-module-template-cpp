@@ -1,0 +1,22 @@
+{
+  "kind": "capability-definition",
+  "format_version": "0.1.0",
+  "id": "my-module.summarize",
+  "version": "0.1.0",
+  "status": "draft",
+  "summary": "Summarizes each series of a tick's observation batch (template sample).",
+  "inputs": {
+    "observations": {
+      "type": "pmp.observation-batch",
+      "type_version": "0.1.0",
+      "required": true
+    }
+  },
+  "outputs": {
+    "summary": {
+      "type": "my-module.summary",
+      "type_version": "0.1.0",
+      "required": true
+    }
+  }
+}

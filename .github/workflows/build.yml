@@ -1,0 +1,250 @@
+# Builds the module on each platform against the pinned praenora-runtime release, tests it,
+# archives it and checks the archive (README.md, "Releasing"). It follows praenora-runtime's own
+# workflow: the same platform keys, runners and generators.
+#
+# - On a pull request to main: builds and tests every platform key, packages the module, checks
+#   that each archive needs only the system's libraries and that the packaged module passes the
+#   runtime's contract checks, and keeps the archives as workflow artifacts for 7 days.
+# - Run manually (Actions > Build > Run workflow, or gh workflow run build.yml --ref <branch>): the
+#   same, for the chosen branch. With the input publish, which only main accepts, it then creates a
+#   draft release v<version> with the archives and their checksums; a maintainer publishes it.
+#
+# Each build job runs the CI presets ci-<key> of CMakePresets.json, which download the runtime's
+# release archive of the same key (cmake/PraenoraRuntimePin.cmake, checked against its SHA-256)
+# for the module SDK and the praenora tool, and build nlohmann/json and GoogleTest from their pinned
+# sources. The runner labels are those of praenora-runtime's workflow, fixed versions, never
+# -latest. The module's version and name are read from CMakeLists.txt, from the lines
+# "project(<name> VERSION x.y.z ...)" and "set(MODULE_NAME <name>)".
+
+name: Build
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Create a draft release v<version> with the archives (main only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      name: ${{ steps.identity.outputs.name }}
+      runtime-version: ${{ steps.identity.outputs.runtime-version }}
+    env:
+      PUBLISH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read the module's identity
+        id: identity
+        run: |
+          n='[0-9][0-9]*'
+          version=$(sed -n "s/^project([^ ]* VERSION \($n\.$n\.$n\)[ )].*/\1/p" CMakeLists.txt)
+          name=$(sed -n 's/^set(MODULE_NAME \([a-z0-9.-]*\))$/\1/p' CMakeLists.txt)
+          runtime=$(sed -n 's/^set(PRAENORA_RUNTIME_VERSION "\([0-9.]*\)")$/\1/p' \
+              cmake/PraenoraRuntimePin.cmake)
+          if [ -z "$version" ] || [ -z "$name" ]; then
+            echo "::error::No project(<name> VERSION x.y.z ...) or set(MODULE_NAME <name>) line" \
+                "found in CMakeLists.txt"
+            exit 1
+          fi
+          if [ -z "$runtime" ]; then
+            echo "::error::No PRAENORA_RUNTIME_VERSION found in cmake/PraenoraRuntimePin.cmake"
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "name=$name"
+            echo "runtime-version=$runtime"
+          } >> "$GITHUB_OUTPUT"
+          echo "Module $name $version, against praenora-runtime $runtime"
+      # The tag is looked up with the job's token, so this works in private repositories too:
+      # git/ref/tags/<tag> names exactly one tag and answers HTTP 404 when it does not exist.
+      - name: Check that a release can be made
+        if: env.PUBLISH == 'true'
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Releases are made from main only, not from $GITHUB_REF"
+            exit 1
+          fi
+          if output=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" 2>&1); then
+            echo "::error::The tag v$VERSION exists already; raise project(VERSION) in" \
+                "CMakeLists.txt"
+            exit 1
+          elif printf '%s' "$output" | grep -q 'HTTP 404'; then
+            echo "No tag v$VERSION yet"
+          else
+            echo "::error::gh api could not look up the tag v$VERSION: $output"
+            exit 1
+          fi
+
+  build:
+    name: ${{ matrix.key }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - key: linux-x64-release
+            runner: ubuntu-24.04
+          - key: macos-arm64-release
+            runner: macos-26
+          - key: windows-x64-release
+            runner: windows-2022
+          - key: windows-x64-debug
+            runner: windows-2022
+    steps:
+      # Without line-ending conversion, the working tree holds the committed bytes (LF, as
+      # .gitattributes says), which the test vectors and catalog entries are read as.
+      - name: Configure Git (Windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: command -v ninja || brew install ninja
+      # The Windows presets use the Visual Studio 2022 generator, which finds MSVC itself.
+      - name: Show the tools
+        run: cmake --version
+      # The runtime archive is unpacked into the runner's temporary directory: its deepest file is
+      # about 133 characters below the download directory, which inside the checkout
+      # (D:\a\<repository>\<repository>\build\ci-<key>\) would bring a longer repository name
+      # past Windows' 260-character path limit.
+      - name: Configure
+        run: >-
+          cmake --preset ci-${{ matrix.key }}
+          "-DPRAENORA_RUNTIME_DOWNLOAD_DIR=${{ runner.temp }}/praenora-runtime"
+      - name: Build
+        run: cmake --build --preset ci-${{ matrix.key }} --parallel
+      - name: Test
+        run: ctest --preset ci-${{ matrix.key }}
+      # The Visual Studio generator names the target PACKAGE, and passes the build preset's
+      # configuration to cpack.
+      - name: Archive the module
+        run: >-
+          cmake --build --preset "ci-${{ matrix.key }}"
+          --target "${{ startsWith(matrix.key, 'windows-') && 'PACKAGE' || 'package' }}"
+      - name: Check the archive
+        shell: bash
+        run: bash .github/scripts/check-archive.sh "build/ci-${{ matrix.key }}"
+      - name: Upload the archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.key }}
+          path: |
+            build/ci-${{ matrix.key }}/package/*.tar.xz
+            build/ci-${{ matrix.key }}/package/*.zip
+            build/ci-${{ matrix.key }}/package/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  release:
+    name: Draft release
+    needs: [prepare, build]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      NAME: ${{ needs.prepare.outputs.name }}
+      RUNTIME_VERSION: ${{ needs.prepare.outputs.runtime-version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Download the archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Check the archives
+        working-directory: dist
+        run: |
+          shopt -s nullglob
+          archives=(*.tar.xz *.zip)
+          if [ "${#archives[@]}" -ne 4 ]; then
+            echo "::error::${#archives[@]} archives were downloaded, not 4"
+            exit 1
+          fi
+          for archive in "${archives[@]}"; do
+            case "$archive" in
+              "$NAME-$VERSION-"*) ;;
+              *) echo "::error::$archive is not of $NAME $VERSION"; exit 1 ;;
+            esac
+            sha256sum -c "$archive.sha256"
+          done
+      # The versions come from the Linux archive's manifest.
+      - name: Write the release notes
+        run: |
+          linux=$(ls dist/"$NAME-$VERSION"-linux-*.tar.xz)
+          tar -xJf "$linux" -C "$RUNNER_TEMP"
+          root="$RUNNER_TEMP/$(basename "$linux" .tar.xz)"
+          manifest="$root/lib/praenora/modules/$NAME/$NAME.pmm.json"
+          runtime="https://github.com/INFLECT-Praenora/praenora-runtime"
+          {
+            echo "$NAME $VERSION, a Praenora module, built from $GITHUB_SHA."
+            echo
+            echo "| Item | Version |"
+            echo "|---|---|"
+            jq -r '["Module", .module.version],
+                   ["Capabilities", ([.capabilities[] | "\(.id)@\(.version)"] | join(", "))],
+                   ["Module SDK", .sdk_version],
+                   ["Praenora Module Protocol (PMP)", .pmp_version],
+                   ["Module ABI", "\(.abi.major).\(.abi.minor)"]
+                   | "| " + join(" | ") + " |"' "$manifest"
+            jq -r 'if (.requires.services // []) | length > 0
+                   then "| Runtime services | " + ([.requires.services[]
+                     | "\(.name)@\(.major).\(.minor)\(if .optional then " (optional)" else "" end)"]
+                     | join(", ")) + " |"
+                   else empty end' "$manifest"
+            echo
+            echo "Built and tested against [praenora-runtime $RUNTIME_VERSION]($runtime/releases/tag/v$RUNTIME_VERSION)."
+            echo "Each archive has a \`.sha256\` file beside it."
+            echo
+            echo "To deploy, copy the contents of the archive for the runtime's platform into the" \
+                "runtime installation's prefix: the runtime then finds the module in" \
+                "\`lib/praenora/modules/$NAME/\`."
+            if [ -d "$root/share/praenora/module-catalog" ]; then
+              echo "The module's catalog entries are in \`share/praenora/module-catalog/\`; add" \
+                  "them with \`PRAENORA_CATALOG_PATH=<prefix>/share/praenora/module-catalog\`" \
+                  "or \`--catalog-path\`."
+            fi
+            echo
+            echo "License files are in \`share/praenora/licenses/$NAME/\`."
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+      - name: Create the draft release
+        run: |
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            echo "::error::A release v$VERSION exists already"
+            exit 1
+          fi
+          gh release create "v$VERSION" --draft --target "$GITHUB_SHA" \
+              --title "$NAME $VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
+              dist/*

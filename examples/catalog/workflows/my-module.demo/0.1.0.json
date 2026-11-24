@@ -1,0 +1,36 @@
+{
+  "kind": "workflow-definition",
+  "format_version": "0.1.0",
+  "name": "my-module.demo",
+  "version": "0.1.0",
+  "status": "draft",
+  "summary": "The demo workflow of the template's sample module: one step summarizes each tick's observations.",
+  "inputs": {
+    "observations": {
+      "type": "pmp.observation-batch",
+      "type_version": "0.1.0"
+    }
+  },
+  "steps": {
+    "summarize": {
+      "capability": "my-module.summarize",
+      "capability_version": "0.1.0"
+    }
+  },
+  "connections": [
+    {
+      "from": "inputs.observations",
+      "to": "summarize.observations"
+    },
+    {
+      "from": "summarize.summary",
+      "to": "outputs.summary"
+    }
+  ],
+  "outputs": {
+    "summary": {
+      "type": "my-module.summary",
+      "type_version": "0.1.0"
+    }
+  }
+}

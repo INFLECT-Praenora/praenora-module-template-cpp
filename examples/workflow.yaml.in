@@ -1,0 +1,33 @@
+# The demo workflow of the template's sample module: each tick, the step `summarize` summarizes the
+# tick's observations. The build generates workflow.yaml from this file (with the module's name and
+# version from CMakeLists.txt) and copies data/ beside it; ctest -L workflow validates and runs it:
+#
+#   praenora run <build>/examples/workflow.yaml --module-path <build>/<module name> \
+#       --catalog-path catalog --catalog-path examples/catalog --output-dir <dir>
+#
+# TEMPLATE: adapt it to your module, or delete examples/ (the workflow tests then go with it).
+kind: workflow-config
+format_version: "0.1.0"
+
+workflow:
+  name: my-module.demo
+  version: "0.1.0"
+
+run:
+  seed: 1
+  ticks: 3
+  time: { unit: d, start: 0.0, period: 1.0 }
+
+inputs:
+  observations:
+    source: observation-csv
+    path: data/observations.csv
+
+steps:
+  summarize:
+    module: { name: @MODULE_NAME@, version: "@PROJECT_VERSION@" }
+    parameters: { min_count: 1 }
+
+outputs:
+  directory: null
+  record: [summary]

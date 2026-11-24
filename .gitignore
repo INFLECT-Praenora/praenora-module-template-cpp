@@ -1,0 +1,9 @@
+.idea/
+.vscode/
+build/
+out/
+CMakeUserPresets.json
+.cache/
+.DS_Store
+Testing/
+/compile_commands.json
